@@ -1,9 +1,11 @@
 import math
 import pyomo.core as pyomo
+import numpy as np
+
+BigM = 1000000
 
 
 def add_storage(m):
-
     # storage (e.g. hydrogen, pump storage)
     indexlist = set()
     for key in m.storage_dict["eff-in"]:
@@ -76,6 +78,22 @@ def add_storage(m):
         m.tm, m.sto_tuples,
         within=pyomo.NonNegativeReals,
         doc='Power flow out of storage (MW) per timestep')
+    m.e_sto_throughput = pyomo.Var(
+        m.sto_tuples,
+        within=pyomo.NonNegativeReals,
+        doc='Energy throughput of storage (MWh) over time of analysis'
+    )
+    m.e_sto_charge_state = pyomo.Var(
+        m.tm, m.sto_tuples,
+        within=pyomo.Binary,
+        doc='Indicates if the battery is charging'
+    )
+    m.e_sto_discharge_state = pyomo.Var(
+        m.tm, m.sto_tuples,
+        within=pyomo.Binary,
+        doc='Indicates if the battery is discharging'
+    )
+
     m.e_sto_con = pyomo.Var(
         m.t, m.sto_tuples,
         within=pyomo.NonNegativeReals,
@@ -86,14 +104,45 @@ def add_storage(m):
         m.tm, m.sto_tuples,
         rule=def_storage_state_rule,
         doc='storage[t] = (1 - sd) * storage[t-1] + in * eff_i - out / eff_o')
+
+    m.storage_charge_discharge_cancelation = pyomo.Constraint(
+        m.tm, m.sto_tuples,
+        rule=def_storage_charge_discharge_cancellation_rule,
+        doc='e_charge_state + e_discharge_state <= 1')
+
+    m.def_throughput_state = pyomo.Constraint(
+        m.sto_tuples,
+        rule=def_throughput_state_rule,
+        doc='throughput = throughput + out / eff-out')
+
+    m.def_limit_cycle = pyomo.Constraint(
+        m.sto_tuples,
+        rule=def_limit_cyle_rule,
+        doc='capacity <= throughput / maximum cycles (for studied period)'
+    )
+
     m.res_storage_input_by_power = pyomo.Constraint(
         m.tm, m.sto_tuples,
         rule=res_storage_input_by_power_rule,
         doc='storage input <= storage power')
+
+    m.res_storage_charge_input_by_power = pyomo.Constraint(
+        m.tm, m.sto_tuples,
+        rule=res_storage_charge_input_by_power_rule,
+        doc='P in <= charge state * BigM'
+    )
+
     m.res_storage_output_by_power = pyomo.Constraint(
         m.tm, m.sto_tuples,
         rule=res_storage_output_by_power_rule,
         doc='storage output <= storage power')
+
+    m.res_storage_discharge_output_by_power = pyomo.Constraint(
+        m.tm, m.sto_tuples,
+        rule=res_storage_discharge_output_by_power_rule,
+        doc='P out <= Discharge state * BigM'
+    )
+
     m.res_storage_state_by_capacity = pyomo.Constraint(
         m.t, m.sto_tuples,
         rule=res_storage_state_by_capacity_rule,
@@ -131,11 +180,50 @@ def def_storage_state_rule(m, t, stf, sit, sto, com):
     return (m.e_sto_con[t, stf, sit, sto, com] ==
             m.e_sto_con[t - 1, stf, sit, sto, com] *
             (1 - m.storage_dict['discharge']
-             [(stf, sit, sto, com)]) ** m.dt.value +
+            [(stf, sit, sto, com)]) ** m.dt.value +
             m.e_sto_in[t, stf, sit, sto, com] *
             m.storage_dict['eff-in'][(stf, sit, sto, com)] -
             m.e_sto_out[t, stf, sit, sto, com] /
             m.storage_dict['eff-out'][(stf, sit, sto, com)])
+
+
+# Makes sure that the storage is not charged and discharged at the same time
+# Charge state + discharge state <=1
+
+def def_storage_charge_discharge_cancellation_rule(m, t, stf, sit, sto, com):
+    return m.e_sto_charge_state[t, stf, sit, sto, com] <= 1 - m.e_sto_discharge_state[t, stf, sit, sto, com]
+
+
+# Energy throughput of the battery
+# throughput = Sum(retrieved energy[t]/output efficiency) over tm
+
+def def_throughput_state_rule(m, stf, sit, sto, com):
+    throughput = 0
+    for t in m.tm:
+        throughput = throughput + m.e_sto_out[t, stf, sit, sto, com] / m.storage_dict['eff-out'][(stf, sit, sto, com)]
+
+    return m.e_sto_throughput[stf, sit, sto, com] == throughput
+
+
+# Limit the number of cycles of the storage system
+
+def def_limit_cyle_rule(m, stf, sit, sto, com):
+    periodlen = len(m.tm) + 1
+
+    maxcycles = m.storage_dict['cycles'][(stf, sit, sto, com)]
+    if np.isnan(maxcycles):
+        return pyomo.Constraint.Feasible
+    depre = m.storage_dict['depreciation'][(stf, sit, sto, com)]
+
+    cycles = (maxcycles / (depre * 8760)) * periodlen
+
+    if np.isnan(m.storage_dict['cyclecoef'][(stf, sit, sto, com)]) \
+            or m.storage_dict['cyclecoef'][(stf, sit, sto, com)] == 0:
+        return m.cap_sto_c[stf, sit, sto, com] <= m.e_sto_throughput[stf, sit, sto, com] / cycles
+    else:
+        return m.cap_sto_c[stf, sit, sto, com] \
+               <= (m.e_sto_throughput[stf, sit, sto, com] * m.storage_dict['cyclecoef'][(stf, sit, sto, com)]) / cycles
+
 
 # storage capacity (for m.cap_sto_c expression)
 
@@ -147,11 +235,11 @@ def def_storage_capacity_rule(m, stf, sit, sto, com):
                 cap_sto_c = m.storage_dict['cap-up-c'][(stf, sit, sto, com)]
             else:
                 cap_sto_c = (
-                    sum(m.cap_sto_c_new[stf_built, sit, sto, com]
-                        for stf_built in m.stf
-                        if (sit, sto, com, stf_built, stf) in
-                        m.operational_sto_tuples) +
-                    m.storage_dict['inst-cap-c'][(min(m.stf), sit, sto, com)])
+                        sum(m.cap_sto_c_new[stf_built, sit, sto, com]
+                            for stf_built in m.stf
+                            if (sit, sto, com, stf_built, stf) in
+                            m.operational_sto_tuples) +
+                        m.storage_dict['inst-cap-c'][(min(m.stf), sit, sto, com)])
         else:
             cap_sto_c = (
                 sum(m.cap_sto_c_new[stf_built, sit, sto, com]
@@ -167,6 +255,7 @@ def def_storage_capacity_rule(m, stf, sit, sto, com):
 
     return cap_sto_c
 
+
 # storage power (for m.cap_sto_p expression)
 
 
@@ -178,11 +267,11 @@ def def_storage_power_rule(m, stf, sit, sto, com):
                     (stf, sit, sto, com)]
             else:
                 cap_sto_p = (
-                    sum(m.cap_sto_p_new[stf_built, sit, sto, com]
-                        for stf_built in m.stf
-                        if (sit, sto, com, stf_built, stf) in
-                        m.operational_sto_tuples) +
-                    m.storage_dict['inst-cap-p'][(min(m.stf), sit, sto, com)])
+                        sum(m.cap_sto_p_new[stf_built, sit, sto, com]
+                            for stf_built in m.stf
+                            if (sit, sto, com, stf_built, stf) in
+                            m.operational_sto_tuples) +
+                        m.storage_dict['inst-cap-p'][(min(m.stf), sit, sto, com)])
         else:
             cap_sto_p = (
                 sum(m.cap_sto_p_new[stf_built, sit, sto, com]
@@ -198,18 +287,27 @@ def def_storage_power_rule(m, stf, sit, sto, com):
 
     return cap_sto_p
 
+
 # storage input <= storage power
-
-
 def res_storage_input_by_power_rule(m, t, stf, sit, sto, com):
     return (m.e_sto_in[t, stf, sit, sto, com] <= m.dt *
             m.cap_sto_p[stf, sit, sto, com])
+
+
+# storage input <= charging state * BigM
+def res_storage_charge_input_by_power_rule(m, tm, stf, sit, sto, com):
+    return m.e_sto_in[tm, stf, sit, sto, com] <= m.e_sto_charge_state[tm, stf, sit, sto, com] * BigM
 
 
 # storage output <= storage power
 def res_storage_output_by_power_rule(m, t, stf, sit, sto, co):
     return (m.e_sto_out[t, stf, sit, sto, co] <= m.dt *
             m.cap_sto_p[stf, sit, sto, co])
+
+
+# storage input <= charging state * BigM
+def res_storage_discharge_output_by_power_rule(m, tm, stf, sit, sto, com):
+    return m.e_sto_out[tm, stf, sit, sto, com] <= m.e_sto_discharge_state[tm, stf, sit, sto, com] * BigM
 
 
 # storage content <= storage capacity
@@ -271,6 +369,7 @@ def storage_balance(m, tm, stf, sit, com):
                for stframe, site, storage, commodity in m.sto_tuples
                if site == sit and stframe == stf and commodity == com)
 
+
 # storage costs
 
 
@@ -320,8 +419,8 @@ def op_sto_tuples(sto_tuple, m):
             index_helper = sorted_stf.index(stf_later)
             if stf_later == max(sorted_stf):
                 if (stf_later +
-                    m.global_prop_dict['value'][(max(sorted_stf), 'Weight')] -
-                    1 <= stf +
+                        m.global_prop_dict['value'][(max(sorted_stf), 'Weight')] -
+                        1 <= stf +
                         m.storage_dict['depreciation'][(stf, sit, sto, com)]):
                     op_sto.append((sit, sto, com, stf, stf_later))
             elif (sorted_stf[index_helper + 1] <=
@@ -346,13 +445,13 @@ def inst_sto_tuples(m):
             index_helper = sorted_stf.index(stf_later)
             if stf_later == max(m.stf):
                 if (stf_later +
-                    m.global_prop_dict['value'][(max(sorted_stf), 'Weight')] -
-                    1 < min(m.stf) +
+                        m.global_prop_dict['value'][(max(sorted_stf), 'Weight')] -
+                        1 < min(m.stf) +
                         m.storage_dict['lifetime'][(stf, sit, sto, com)]):
                     inst_sto.append((sit, sto, com, stf_later))
             elif (sorted_stf[index_helper + 1] <=
                   min(m.stf) + m.storage_dict['lifetime'][
-                                (stf, sit, sto, com)]):
+                      (stf, sit, sto, com)]):
                 inst_sto.append((sit, sto, com, stf_later))
 
     return inst_sto

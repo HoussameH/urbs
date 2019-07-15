@@ -2,7 +2,6 @@ import os
 import shutil
 import urbs
 
-
 input_files = 'Input'
 result_name = 'Mimo-ex'
 result_dir = urbs.prepare_result_directory(result_name)  # name + time stamp
@@ -16,14 +15,14 @@ except NotADirectoryError:
 shutil.copy(__file__, result_dir)
 
 # objective function
-objective = 'cost' # set either 'cost' or 'CO2' as objective
+objective = 'cost'  # set either 'cost' or 'CO2' as objective
 
 # Choose Solver (cplex, glpk, gurobi, ...)
-solver = 'glpk'
+solver = 'gurobi'
 
 # simulation timesteps
 (offset, length) = (3500, 168)  # time step selection
-timesteps = range(offset, offset+length+1)
+timesteps = range(offset, offset + length + 1)
 dt = 1  # length of each time step (unit: hours)
 
 # detailed reporting commodity/sites
@@ -43,8 +42,8 @@ report_tuples = [
     (2034, 'North', 'Elec'),
     (2034, 'Mid', 'Elec'),
     (2034, 'South', 'Elec'),
-    (2034, ['North', 'Mid', 'South'], 'Elec'),    
-    ]
+    (2034, ['North', 'Mid', 'South'], 'Elec'),
+]
 
 # optional: define names for sites in report_tuples
 report_sites_name = {('North', 'Mid', 'South'): 'All'}
@@ -66,8 +65,8 @@ plot_tuples = [
     (2034, 'North', 'Elec'),
     (2034, 'Mid', 'Elec'),
     (2034, 'South', 'Elec'),
-    (2034, ['North', 'Mid', 'South'], 'Elec'),    
-    ]
+    (2034, ['North', 'Mid', 'South'], 'Elec'),
+]
 
 # optional: define names for sites in plot_tuples
 plot_sites_name = {('North', 'Mid', 'South'): 'All'}
@@ -87,20 +86,20 @@ for country, color in my_colors.items():
 
 # select scenarios to be run
 scenarios = [
-             urbs.scenario_base,
-             urbs.scenario_stock_prices,
-             urbs.scenario_co2_limit,
-             urbs.scenario_co2_tax_mid,
-             urbs.scenario_no_dsm,
-             urbs.scenario_north_process_caps,
-             urbs.scenario_all_together
-            ]
+    urbs.scenario_base,
+    # urbs.scenario_stock_prices,
+    # urbs.scenario_co2_limit,
+    # urbs.scenario_co2_tax_mid,
+    # urbs.scenario_no_dsm,
+    # urbs.scenario_north_process_caps,
+    urbs.scenario_all_together
+]
 
 for scenario in scenarios:
-    prob = urbs.run_scenario(input_files, solver, timesteps, scenario, 
-                        result_dir, dt, objective, 
-                        plot_tuples=plot_tuples,
-                        plot_sites_name=plot_sites_name,
-                        plot_periods=plot_periods,
-                        report_tuples=report_tuples,
-                        report_sites_name=report_sites_name)
+    prob = urbs.run_scenario(input_files, solver, timesteps, scenario,
+                             result_dir, dt, objective,
+                             plot_tuples=plot_tuples,
+                             plot_sites_name=plot_sites_name,
+                             plot_periods=plot_periods,
+                             report_tuples=report_tuples,
+                             report_sites_name=report_sites_name)

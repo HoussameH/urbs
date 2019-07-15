@@ -1,0 +1,18 @@
+
+Gurobi 8.1.1 (win64, Python) logging started 07/15/19 15:37:55
+
+Academic license - for non-commercial use only
+Read LP format model from file C:\Users\houss\AppData\Local\Temp\tmpik6f6ua6.pyomo.lp
+Reading time = 1.06 seconds
+x193152: 135515 rows, 137260 columns, 548780 nonzeros
+Changed value of parameter QCPDual to 1
+   Prev: 0  Min: 0  Max: 1  Default: 0
+
+Gurobi 8.1.1 (win64, Python) logging started 07/15/19 19:06:27
+
+Academic license - for non-commercial use only
+Read LP format model from file C:\Users\houss\AppData\Local\Temp\tmpouwssrx2.pyomo.lp
+Reading time = 1.04 seconds
+x193152: 135515 rows, 137260 columns, 548780 nonzeros
+Changed value of parameter QCPDual to 1
+   Prev: 0  Min: 0  Max: 1  Default: 0
