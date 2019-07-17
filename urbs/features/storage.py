@@ -2,7 +2,7 @@ import math
 import pyomo.core as pyomo
 import numpy as np
 
-BigM = 1000000
+BigM = 10000
 
 
 def add_storage(m):
@@ -83,16 +83,16 @@ def add_storage(m):
         within=pyomo.NonNegativeReals,
         doc='Energy throughput of storage (MWh) over time of analysis'
     )
-    m.e_sto_charge_state = pyomo.Var(
+    m.e_sto_charge_discharge_state = pyomo.Var(
         m.tm, m.sto_tuples,
         within=pyomo.Binary,
-        doc='Indicates if the battery is charging'
+        doc='Indicates if the battery is charging(1) or discharging(0)'
     )
-    m.e_sto_discharge_state = pyomo.Var(
-        m.tm, m.sto_tuples,
-        within=pyomo.Binary,
-        doc='Indicates if the battery is discharging'
-    )
+    # m.e_sto_discharge_state = pyomo.Var(
+    #     m.tm, m.sto_tuples,
+    #     within=pyomo.Binary,
+    #     doc='Indicates if the battery is discharging'
+    # )
 
     m.e_sto_con = pyomo.Var(
         m.t, m.sto_tuples,
@@ -105,10 +105,10 @@ def add_storage(m):
         rule=def_storage_state_rule,
         doc='storage[t] = (1 - sd) * storage[t-1] + in * eff_i - out / eff_o')
 
-    m.storage_charge_discharge_cancelation = pyomo.Constraint(
-        m.tm, m.sto_tuples,
-        rule=def_storage_charge_discharge_cancellation_rule,
-        doc='e_charge_state + e_discharge_state <= 1')
+    # m.storage_charge_discharge_cancelation = pyomo.Constraint(
+    #     m.tm, m.sto_tuples,
+    #     rule=def_storage_charge_discharge_cancellation_rule,
+    #     doc='e_charge_state + e_discharge_state <= 1')
 
     m.def_throughput_state = pyomo.Constraint(
         m.sto_tuples,
@@ -140,7 +140,7 @@ def add_storage(m):
     m.res_storage_discharge_output_by_power = pyomo.Constraint(
         m.tm, m.sto_tuples,
         rule=res_storage_discharge_output_by_power_rule,
-        doc='P out <= Discharge state * BigM'
+        doc='P out <= (1- charge state) * BigM'
     )
 
     m.res_storage_state_by_capacity = pyomo.Constraint(
@@ -187,11 +187,11 @@ def def_storage_state_rule(m, t, stf, sit, sto, com):
             m.storage_dict['eff-out'][(stf, sit, sto, com)])
 
 
-# Makes sure that the storage is not charged and discharged at the same time
-# Charge state + discharge state <=1
-
-def def_storage_charge_discharge_cancellation_rule(m, t, stf, sit, sto, com):
-    return m.e_sto_charge_state[t, stf, sit, sto, com] <= 1 - m.e_sto_discharge_state[t, stf, sit, sto, com]
+# # Makes sure that the storage is not charged and discharged at the same time
+# # Charge state + discharge state <=1
+#
+# def def_storage_charge_discharge_cancellation_rule(m, t, stf, sit, sto, com):
+#     return m.e_sto_charge_state[t, stf, sit, sto, com] <= 1 - m.e_sto_discharge_state[t, stf, sit, sto, com]
 
 
 # Energy throughput of the battery
@@ -296,7 +296,12 @@ def res_storage_input_by_power_rule(m, t, stf, sit, sto, com):
 
 # storage input <= charging state * BigM
 def res_storage_charge_input_by_power_rule(m, tm, stf, sit, sto, com):
-    return m.e_sto_in[tm, stf, sit, sto, com] <= m.e_sto_charge_state[tm, stf, sit, sto, com] * BigM
+    cap_up = m.storage_dict['cap-up-p'][(stf, sit, sto, com)]
+    if ~np.isinf(cap_up):
+        maxcap = cap_up
+    else:
+        maxcap = BigM
+    return m.e_sto_in[tm, stf, sit, sto, com] <= m.e_sto_charge_discharge_state[tm, stf, sit, sto, com] * maxcap
 
 
 # storage output <= storage power
@@ -307,7 +312,12 @@ def res_storage_output_by_power_rule(m, t, stf, sit, sto, co):
 
 # storage input <= charging state * BigM
 def res_storage_discharge_output_by_power_rule(m, tm, stf, sit, sto, com):
-    return m.e_sto_out[tm, stf, sit, sto, com] <= m.e_sto_discharge_state[tm, stf, sit, sto, com] * BigM
+    cap_up = m.storage_dict['cap-up-p'][(stf, sit, sto, com)]
+    if ~np.isinf(cap_up):
+        maxcap = cap_up
+    else:
+        maxcap = BigM
+    return m.e_sto_out[tm, stf, sit, sto, com] <= (1 - m.e_sto_charge_discharge_state[tm, stf, sit, sto, com]) * maxcap
 
 
 # storage content <= storage capacity

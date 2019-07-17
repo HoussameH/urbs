@@ -13,7 +13,8 @@ def create_result_cache(prob):
 
     result_cache = {}
     for entity in entities:
-        result_cache[entity] = get_entity(prob, entity)
+        if entity != 'def_costs':
+            result_cache[entity] = get_entity(prob, entity)
     return result_cache
 
 
